@@ -11,9 +11,66 @@ import reactor.test.StepVerifier;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 class ReactiveMasterApplicationTests {
+    private AtomicBoolean publisherExecuted = new AtomicBoolean(false);
+    private AtomicBoolean publisherCreated = new AtomicBoolean(false);
+
+    private int sum(List<Integer> list){
+        publisherExecuted.set(true);
+        return list.stream().mapToInt(x->x).sum();
+    }
+
+    private Mono<Integer> createPub(){
+        publisherCreated.set(true);
+        return Mono.fromSupplier(() -> sum(List.of(1,2,3)));
+    }
+
+    @Test
+    void just(){
+
+        var mono = Mono.just(sum(List.of(1,2,3)));
+
+        assert publisherExecuted.get();
+
+        mono.as(StepVerifier::create)
+                .expectNext(6)
+                .verifyComplete();
+
+        assert publisherExecuted.get();
+
+
+    }
+
+    @Test
+    void from_Supplier(){
+
+        var mono = Mono.fromSupplier(() ->sum(List.of(1,2,3)));
+
+        assert !publisherExecuted.get();
+
+        mono.as(StepVerifier::create)
+                .expectNext(6)
+                .verifyComplete();
+
+        assert publisherExecuted.get();
+
+
+    }
+
+    @Test
+    void defer(){
+        var mono = Mono.defer(this::createPub);
+        assert !publisherExecuted.get() && !publisherCreated.get();
+
+        mono.as(StepVerifier::create)
+                .expectNext(6)
+                .verifyComplete();
+
+        assert publisherExecuted.get() && publisherCreated.get();
+    }
 
     @Test
     void name() {

@@ -1,6 +1,7 @@
 package com.example.reactivemaster.common;
 
 import com.github.javafaker.Faker;
+import org.reactivestreams.Subscriber;
 
 import java.time.Duration;
 
@@ -10,7 +11,20 @@ public class Util {
         return faker;
     }
 
-    public static void sleep(int secs) throws InterruptedException {
-        Thread.sleep(Duration.ofSeconds(secs));
+    public static void sleep(int secs)  {
+        try {
+            Thread.sleep(Duration.ofSeconds(secs));
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
+
+    public static <T> Subscriber<T> subscriber(String name){
+        return new DefaultSub<>(name);
+    }
+
+    public static <T> Subscriber<T> subscriber(){
+        return new DefaultSub<>("");
+    }
+
 }
