@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
+import java.util.function.UnaryOperator;
 
 @Slf4j
 class ReactiveMasterApplicationTests {
@@ -202,7 +203,7 @@ class ReactiveMasterApplicationTests {
 
         /*
             Now Flux Create doesn't create the data UNTIL the subscriber requests
-            when he does, it create the data with the amount the sub wants.
+            when he does, it creates the data with the amount the sub wants.
          */
     }
 
@@ -278,6 +279,39 @@ class ReactiveMasterApplicationTests {
     }
 
     @Test
+    void handle(){
+        Flux.range(1,5)
+                .handle((item,sink) ->{
+                    switch (item){
+                        case 1 -> sink.next(99);
+                        case 2 -> {}
+                        case 5 -> sink.error(new RuntimeException());
+                        default -> sink.next(item);
+                    }
+                })
+                .as(StepVerifier::create)
+                .expectNext(99,3,4)
+                .verifyError(RuntimeException.class);
+    }
+
+    @Test
+    void handle1(){
+        Flux.<String>generate(synchronousSink -> {
+            var country = Util.faker().country().name();
+            synchronousSink.next(country);
+        })
+                .<String>handle((country,sink) ->{
+                    if(country.equalsIgnoreCase("canada")){
+                        sink.complete();
+                    }
+                })
+                .collectList()
+                .as(StepVerifier::create)
+                .assertNext(list ->list.stream().noneMatch(x->x.equalsIgnoreCase("canada")))
+                .verifyComplete();
+    }
+
+    @Test
     void error(){
         Mono.error(new RuntimeException("Error"))
                 .as(StepVerifier::create)
@@ -308,11 +342,22 @@ class ReactiveMasterApplicationTests {
 
     @Test
     void onErrorReturn(){
-        Flux.just(1,2)
-                .concatWith(Flux.error(new IllegalArgumentException("Error")))
-                .onErrorReturn(IllegalArgumentException.class,0)
+        Flux.range(1,5)
+                .map(x->x==4?(x/0):x)
+                .onErrorReturn(ArithmeticException.class,-1)
                 .as(StepVerifier::create)
-                .expectNext(1,2,0)
+                .expectNext(1,2,3,-1)
+                .verifyComplete();
+    }
+
+    @Test
+    void onErrorResume2(){
+        Flux.range(1,5)
+                .map(x->x==4?(x/0):x)
+                .onErrorResume(ex ->Mono.just(-1))
+           //     .onErrorResume(ArithmeticException.class,ex-> Mono.just(-1))
+                .as(StepVerifier::create)
+                .expectNext(1,2,3,-1)
                 .verifyComplete();
     }
 
@@ -606,6 +651,31 @@ class ReactiveMasterApplicationTests {
     }
 
     @Test
+    void timeout1(){
+        Mono.just("ok")
+                .delayElement(Duration.ofSeconds(5))
+                .timeout(Duration.ofSeconds(1),Mono.just("ab"))
+                .as(StepVerifier::create)
+                .expectSubscription()
+                .expectNext("ab")
+                .expectComplete()
+                .verify(Duration.ofSeconds(2));
+    }
+
+    @Test
+    void timeout2(){
+        Mono.just("ok")
+                .delayElement(Duration.ofSeconds(5))
+                .timeout(Duration.ofSeconds(1),Mono.just("ab"))
+                .timeout(Duration.ofMillis(200),Mono.just("xy"))
+                .as(StepVerifier::create)
+                .expectSubscription()
+                .expectNext("xy")
+                .expectComplete()
+                .verify(Duration.ofMillis(300));
+    }
+
+    @Test
     void startWith(){
         Flux.range(1,2)
                 .startWith(44)
@@ -630,6 +700,19 @@ class ReactiveMasterApplicationTests {
                     fluxSink.complete();
                 }).as(StepVerifier::create)
                 .expectNext(1,2)
+                .verifyComplete();
+    }
+
+    private UnaryOperator<Flux<Integer>> addMapper(){
+        return flux -> flux.map(x->x*2);
+    }
+
+    @Test
+    void transform(){
+        Flux.range(1,3)
+                .transform(addMapper())
+                .as(StepVerifier::create)
+                .expectNext(2,4,6)
                 .verifyComplete();
     }
 
