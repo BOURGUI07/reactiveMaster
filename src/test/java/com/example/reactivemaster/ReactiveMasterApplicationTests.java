@@ -1,17 +1,19 @@
 package com.example.reactivemaster;
 
 import com.example.reactivemaster.common.Util;
+import com.example.reactivemaster.sec01.subscriber.SubscriberImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 
 @Slf4j
 class ReactiveMasterApplicationTests {
@@ -72,6 +74,26 @@ class ReactiveMasterApplicationTests {
         assert publisherExecuted.get() && publisherCreated.get();
     }
 
+    private List<Integer> createList(){
+        publisherExecuted.set(true);
+        return List.of(1,2,3);
+    }
+
+    private Flux<Integer> createFlux(){
+        publisherCreated.set(true);
+        return Flux.fromIterable(createList());
+    }
+
+    @Test
+    void fluxDefer(){
+        var flux = Flux.defer(this::createFlux);
+        assert !publisherExecuted.get() && !publisherCreated.get();
+        flux.as(StepVerifier::create)
+                .expectNext(1,2,3)
+                .verifyComplete();
+        assert publisherExecuted.get() && publisherCreated.get();
+    }
+
     @Test
     void name() {
         Mono.just("Hello World")
@@ -81,6 +103,178 @@ class ReactiveMasterApplicationTests {
                 //    .expectNextCount(1)
                     .expectNext("Hello World")
                 .verifyComplete();
+    }
+
+    @Test
+    void monoFromFlux(){
+        Flux.range(1,5)
+                .as(Mono::from)
+                .as(StepVerifier::create)
+                .expectNext(1)
+                .verifyComplete();
+    }
+
+    @Test
+    void fluxFromMono(){
+        Mono.just("ab")
+                .as(Flux::from)
+                .as(StepVerifier::create)
+                .expectNext("ab")
+                .verifyComplete();
+    }
+
+    @Test
+    void fluxCreate(){
+        var flux = Flux.<String>create(fluxSink -> {
+            String country;
+            do{
+                country = Util.faker().country().name();
+                fluxSink.next(country);
+            }while(!country.equalsIgnoreCase("canada"));
+            fluxSink.complete();
+        });
+
+        flux
+                .collectList()
+                .as(StepVerifier::create)
+                .assertNext(list ->list.stream().noneMatch(x->x.equalsIgnoreCase("canada")))
+                .verifyComplete();
+    }
+
+    @Test
+    void listThreadUnsafe(){
+        var list = new ArrayList<Integer>();
+
+        Runnable runnable = () ->{
+          for(int i=1;i<=1000;i++){
+              list.add(i);
+          }
+        };
+
+        for(int i=1;i<=10;i++){
+            Thread.ofPlatform().start(runnable);
+        }
+
+        assert list.size() != 10000;
+    }
+
+    @Test
+    void fluxCreateDefaultBehavior(){
+        var sub = new SubscriberImpl();
+
+        Flux.<String>create(fluxSink -> {
+            for(int i=1;i<10;i++){
+                var name = Util.faker().name().fullName();
+                publisherExecuted.set(true);
+                fluxSink.next(name);
+            }
+            fluxSink.complete();
+        }).subscribe(sub);
+
+        sub.getSubscription().cancel();
+        assert publisherExecuted.get();
+
+        /*
+            Flux Create Default behavior is to create the data
+            and stores it in a queue, then when a sub requests data
+            it gives it to them
+            In this case, the Flux.create() generates 10 names before any
+            request demand
+         */
+    }
+
+    @Test
+    void fluxRequestOnDemand(){
+        var sub = new SubscriberImpl();
+
+        Flux.<String>create(fluxSink -> {
+           fluxSink.onRequest(request ->{
+               for(int i=1;i<=request && !fluxSink.isCancelled();i++){
+                   var name = Util.faker().name().fullName();
+                   publisherExecuted.set(true);
+                   fluxSink.next(name);
+               }
+               fluxSink.complete();
+           });
+        }).subscribe(sub);
+        sub.getSubscription().cancel();
+        assert !publisherExecuted.get();
+
+        /*
+            Now Flux Create doesn't create the data UNTIL the subscriber requests
+            when he does, it create the data with the amount the sub wants.
+         */
+    }
+
+    @Test
+    void synchronousSink(){
+        Flux.generate(synchronousSink -> {
+            synchronousSink.next(1);
+            synchronousSink.complete();
+        })
+                .as(StepVerifier::create)
+                .expectNext(1)
+                .verifyComplete();
+    }
+
+    @Test
+    void synchronousSink1(){
+        Flux.generate(synchronousSink -> {
+                    synchronousSink.next(1);
+                })
+                .take(3)
+                .as(StepVerifier::create)
+                .expectNext(1,1,1)
+                .verifyComplete();
+    }
+
+    @Test
+    void synchronousSink2(){
+        Flux.generate(synchronousSink -> {
+                    synchronousSink.next(1);
+                    synchronousSink.error(new RuntimeException());
+                })
+                .take(3)
+                .as(StepVerifier::create)
+                .expectNext(1)
+                .verifyError(RuntimeException.class);
+    }
+
+    @Test
+    void synchronousSink3(){
+        Flux.<String>generate(synchronousSink -> {
+            var name = Util.faker().country().name();
+            synchronousSink.next(name);
+        })
+                .takeUntil(x->x.equalsIgnoreCase("canada"))
+                .collectList()
+                .as(StepVerifier::create)
+                .assertNext(list ->list.stream().noneMatch(x->x.equalsIgnoreCase("canada")))
+                .verifyComplete();
+    }
+
+    @Test
+    void synchronousSink4(){
+        Predicate<List<String>> predicate1 = list -> list.stream().noneMatch(x->x.equalsIgnoreCase("canada"));
+        Predicate<List<String>> predicate = predicate1.or(list ->list.size()==10);
+        Flux.generate(
+                ()->0,
+                (counter,sink) ->{
+                    var country = Util.faker().country().name();
+                    sink.next(country);
+                    counter++;
+                    if(counter==10 || country.equalsIgnoreCase("canada")){
+                        sink.complete();
+                    }
+                    return counter;
+                }
+        )
+                .cast(String.class)
+                .collectList()
+                .as(StepVerifier::create)
+                .assertNext(predicate::test)
+                .verifyComplete();
+
     }
 
     @Test
