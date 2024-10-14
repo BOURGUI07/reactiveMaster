@@ -4,15 +4,18 @@ import com.example.reactivemaster.common.Util;
 import com.example.reactivemaster.sec01.subscriber.SubscriberImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
+import reactor.util.retry.Retry;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
@@ -371,6 +374,15 @@ class ReactiveMasterApplicationTests {
     }
 
     @Test
+    void concatMap(){
+        Flux.range(1,3)
+                .concatMap(i -> Mono.just(i*i))
+                .as(StepVerifier::create)
+                .expectNext(1,4,9)
+                .verifyComplete();
+    }
+
+    @Test
     void map(){
         Flux.just("Orange","Banana","Lemon")
                 .map(String::toUpperCase)
@@ -453,6 +465,16 @@ class ReactiveMasterApplicationTests {
     }
 
     @Test
+    void concatWithValues(){
+        Flux.range(1,5)
+                .concatWithValues(-2,-6)
+                .concatWith(Flux.just(44,22))
+                .as(StepVerifier::create)
+                .expectNext(1,2,3,4,5,-2,-6,44,22)
+                .verifyComplete();
+    }
+
+    @Test
     void merge(){
         Flux.merge(Flux.just(1,2,3),Flux.just(4,5,6))
                 .as(StepVerifier::create)
@@ -482,11 +504,53 @@ class ReactiveMasterApplicationTests {
     @Test
     void buffer(){
         Flux.range(1,6)
+                .buffer()
+                .as(StepVerifier::create)
+                .expectNext(List.of(1,2,3,4,5,6))
+                .verifyComplete();
+    }
+
+    @Test
+    void buffer1(){
+        Flux.range(1,6)
                 .buffer(2)
                 .as(StepVerifier::create)
                 .expectNext(List.of(1,2),List.of(3,4),List.of(5,6))
                 .verifyComplete();
     }
+
+    @Test
+    void buffer2(){
+        Flux.range(1,6)
+                .buffer(3)
+                .as(StepVerifier::create)
+                .expectNext(List.of(1,2,3),List.of(4,5,6))
+                .verifyComplete();
+    }
+
+    @Test
+    void buffer3(){
+        Flux.range(1,6)
+                .delayElements(Duration.ofSeconds(1))
+                .buffer(Duration.ofSeconds(4))
+                .as(StepVerifier::create)
+                .expectNext(List.of(1,2,3))
+                .expectNext(List.of(4,5,6))
+                .expectComplete()
+                .verify(Duration.ofSeconds(7));
+    }
+
+    @Test
+    void buffer4(){
+        Flux.range(1,6)
+                .concatWith(Flux.never())
+                .bufferTimeout(2,Duration.ofSeconds(1))
+                .as(StepVerifier::create)
+                .expectNext(List.of(1, 2), List.of(3, 4), List.of(5, 6))
+                .thenCancel()
+                .verify();
+    }
+
 
     @Test
     void fromSupplier(){
@@ -505,6 +569,108 @@ class ReactiveMasterApplicationTests {
                 .expectNext(2,4,2,4,2,4)
                 .verifyComplete();
     }
+
+    @Test
+    void repeat1(){
+        Mono.just(2)
+                .repeat(3)
+                .as(StepVerifier::create)
+                .expectNextCount(4)
+                .verifyComplete();
+    }
+
+    @Test
+    void repeat2(){
+        Mono.fromSupplier(() ->Util.faker().country().name())
+                .repeat()
+                .takeUntil(country -> country.equalsIgnoreCase("canada"))
+                .collectList()
+                .as(StepVerifier::create)
+                .assertNext(list -> list.stream().noneMatch(x->x.equalsIgnoreCase("canada")))
+                .verifyComplete();
+    }
+
+    @Test
+    void repeat3(){
+        var atomicInteger = new AtomicInteger(0);
+        Mono.fromSupplier(() ->Util.faker().country().name())
+                .repeat(() -> atomicInteger.incrementAndGet()<3)
+                .as(StepVerifier::create)
+                .expectNextCount(3)
+                .verifyComplete();
+    }
+
+    @Test
+    void repeat4(){
+        Mono.fromSupplier(() ->1)
+                .delayElement(Duration.ofSeconds(1))
+                .repeatWhen(flux -> flux.delayElements(Duration.ofSeconds(2)))
+                .take(Duration.ofSeconds(14))
+                .as(StepVerifier::create)
+                .expectNextCount(5)
+                .verifyComplete();
+
+        /*
+            the 1st one will take 1 sec
+            the last 4 will take 3 sec each = 12
+            so it will take 13 secs
+            add one more second
+         */
+    }
+
+    @Test
+    void retry(){
+        var atomicInteger = new AtomicInteger(0);
+        Mono.fromSupplier(() ->{
+            if(atomicInteger.incrementAndGet()<3){
+                throw new RuntimeException("Error");
+            }
+            return "ok";
+        })
+                .retry(1)
+                .as(StepVerifier::create)
+                .verifyError();
+
+    }
+
+    @Test
+    void retry1(){
+        var atomicInteger = new AtomicInteger(0);
+        Mono.fromSupplier(() ->{
+                    if(atomicInteger.incrementAndGet()<3){
+                        throw new RuntimeException("Error");
+                    }
+                    return "ok";
+                })
+                .retry(2)
+                .as(StepVerifier::create)
+                .expectNext("ok")
+                .verifyComplete();
+
+    }
+
+    @Test
+    void retry2(){
+        var atomicInteger = new AtomicInteger(0);
+        Mono.fromSupplier(() ->{
+                    if(atomicInteger.incrementAndGet()<3){
+                        throw new RuntimeException("Error");
+                    }
+                    return "ok";
+                })
+                .retryWhen(Retry.fixedDelay(
+                        2,Duration.ofSeconds(1)) // retry 2 times, 2 secs between each
+                .filter(ex-> RuntimeException.class.equals(ex.getClass())) // ONLY Retry when the error is runtime exception
+                .onRetryExhaustedThrow((spec,signal) -> signal.failure()) // Show the original exception instead of retryExhausted exception
+                .doBeforeRetry(rs-> log.info("RETRYING")))
+                .as(StepVerifier::create)
+                .expectNext("ok")
+                .verifyComplete();
+
+    }
+
+
+
 
     @Test
     void distinct(){
@@ -685,6 +851,27 @@ class ReactiveMasterApplicationTests {
     }
 
     @Test
+    void startWith1(){
+        Flux.range(1,5)
+                .startWith(List.of(0,-1,-4))
+                .take(2)
+                .as(StepVerifier::create)
+                .expectNext(0,-1)
+                .verifyComplete();
+    }
+
+    @Test
+    void startWith2(){
+        var producer1 = Flux.just(11,22,55);
+        var producer2 = Flux.just(33,88,54)
+                .startWith(producer1)
+                .startWith(1000)
+                .as(StepVerifier::create)
+                .expectNext(1000,11,22,55,33,88,54)
+                .verifyComplete();
+    }
+
+    @Test
     void concatDelayError(){
         Flux.concatDelayError(Flux.just(1,2),Flux.error(new RuntimeException()),Flux.just(0))
                 .as(StepVerifier::create)
@@ -735,8 +922,25 @@ class ReactiveMasterApplicationTests {
 
     }
 
+    record Car(String body, String engine, String tires){}
+    @Test
+    void zip(){
+        var bodyFlux = Flux.range(1,5)
+                .map(x->"Body-"+x);
+        var engineFlux = Flux.range(1,3)
+                .map(x->"Engine-"+x);
+        var tiresFlux = Flux.range(1,10)
+                .map(x->"Tire-"+x);
 
+        Flux.zip(bodyFlux,engineFlux,tiresFlux)
+                .map(x->new Car(x.getT1(),x.getT2(),x.getT3()))
+                .as(StepVerifier::create)
+                .expectNext(new Car("Body-1","Engine-1","Tire-1"),
+                        new Car("Body-2","Engine-2","Tire-2"),
+                        new Car("Body-3","Engine-3","Tire-3"))
+                .verifyComplete();
 
+    }
 
 
 }
