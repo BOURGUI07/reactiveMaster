@@ -716,4 +716,27 @@ class ReactiveMasterApplicationTests {
                 .verifyComplete();
     }
 
+    @Test
+    void coldPublisher(){
+        var flux = Flux.interval(Duration.ofSeconds(1))
+                .take(5);
+
+        flux
+                .as(StepVerifier::create)
+                .expectNext(0L,1l,2l,3l,4l)
+                .verifyComplete();
+
+        Util.sleep(2);
+
+        flux
+                .as(StepVerifier::create)
+                .expectNext(0L,1l,2l,3l,4l)
+                .verifyComplete();
+
+    }
+
+
+
+
+
 }
