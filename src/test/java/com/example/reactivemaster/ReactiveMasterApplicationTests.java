@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 import reactor.util.retry.Retry;
 
@@ -669,17 +670,56 @@ class ReactiveMasterApplicationTests {
 
     }
 
+    @Test
+    void sinkOneEmpty(){
+        var sink = Sinks.one();
+        var mono = sink.asMono();
+        sink.tryEmitEmpty();
+        mono
+                .as(StepVerifier::create)
+                .verifyComplete();
 
-
+    }
 
     @Test
-    void distinct(){
-        Flux.just(1,22,24,22)
-                .distinct()
+    void sinkOneValue(){
+        var sink = Sinks.one();
+        var mono = sink.asMono();
+        sink.tryEmitValue("hi");
+        mono
                 .as(StepVerifier::create)
-                .expectNext(1,22,24)
+                .expectNext("hi")
                 .verifyComplete();
+
     }
+
+    @Test
+    void sinkOneError(){
+        var sink = Sinks.one();
+        var mono = sink.asMono();
+        sink.tryEmitError(new RuntimeException());
+        mono
+                .as(StepVerifier::create)
+                .verifyError(RuntimeException.class);
+    }
+
+    @Test
+    void sinkOneMultipleSubs(){
+        var sink = Sinks.one();
+        var mono = sink.asMono();
+        sink.tryEmitValue("hi");
+        mono
+                .as(StepVerifier::create)
+                .expectNext("hi")
+                .verifyComplete();
+
+        mono
+                .as(StepVerifier::create)
+                .expectNext("hi")
+                .verifyComplete();
+
+    }
+
 
     @Test
     void takeUntil(){
@@ -940,6 +980,15 @@ class ReactiveMasterApplicationTests {
                         new Car("Body-3","Engine-3","Tire-3"))
                 .verifyComplete();
 
+    }
+
+    @Test
+    void distinct(){
+        Flux.just(1,22,24,22)
+                .distinct()
+                .as(StepVerifier::create)
+                .expectNext(1,22,24)
+                .verifyComplete();
     }
 
 
