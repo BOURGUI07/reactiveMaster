@@ -35,18 +35,21 @@ class ReactiveMasterApplicationTests {
         return Mono.fromSupplier(() -> sum(List.of(1,2,3)));
     }
 
+    private Mono<Integer> createMonoJustPublisher(){
+        publisherCreated.set(true);
+        return Mono.just(sum(List.of(1,2)));
+    }
+
     @Test
     void just(){
 
-        var mono = Mono.just(sum(List.of(1,2,3)));
+        var mono = createMonoJustPublisher();
 
-        assert publisherExecuted.get();
+        assert publisherExecuted.get() && publisherCreated.get();
 
         mono.as(StepVerifier::create)
-                .expectNext(6)
+                .expectNext(3)
                 .verifyComplete();
-
-        assert publisherExecuted.get();
 
 
     }
@@ -54,9 +57,9 @@ class ReactiveMasterApplicationTests {
     @Test
     void from_Supplier(){
 
-        var mono = Mono.fromSupplier(() ->sum(List.of(1,2,3)));
+        var mono = createPub();
 
-        assert !publisherExecuted.get();
+        assert !publisherExecuted.get() && publisherCreated.get();
 
         mono.as(StepVerifier::create)
                 .expectNext(6)
@@ -771,7 +774,7 @@ class ReactiveMasterApplicationTests {
         Flux.interval(Duration.ofMillis(100))
                 .map(i-> Util.faker().name().firstName())
                 .take(10)
-                .collectMap(v->v,String::length)
+                .collectMap(key->key,String::length)
                 .as(StepVerifier::create)
                 .expectNextMatches(x->{
                     var firstKey = x.keySet().stream().findFirst();
@@ -795,6 +798,15 @@ class ReactiveMasterApplicationTests {
                 .then(Mono.just("AB"))
                 .as(StepVerifier::create)
                 .expectNext("AB")
+                .verifyComplete();
+    }
+
+    @Test
+    void thenMany(){
+        Mono.just("78")
+                .thenMany(Flux.just("AB","cc"))
+                .as(StepVerifier::create)
+                .expectNext("AB","cc")
                 .verifyComplete();
     }
 
