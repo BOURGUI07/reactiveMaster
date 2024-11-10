@@ -5,20 +5,26 @@ import com.example.reactivemaster.sec01.subscriber.SubscriberImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import reactor.test.StepVerifier;
 import reactor.util.retry.Retry;
 
+import java.text.SimpleDateFormat;
 import java.time.Duration;
+import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
+import java.util.stream.Collectors;
 
 @Slf4j
 class ReactiveMasterApplicationTests {
@@ -348,6 +354,25 @@ class ReactiveMasterApplicationTests {
     }
 
     @Test
+    void intervalWithDelay(){
+        System.out.println("BEFORE EMITTING VALUES AT: "+  LocalTime.now());
+        Flux.interval(Duration.ofSeconds(2),Duration.ofSeconds(2))
+                .take(5)
+                .doOnNext(x-> System.out.println("EMITTED VALUE: "  + x + " AT :" + LocalTime.now()))
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete();
+
+        //BEFORE EMITTING VALUES AT: 08:45:05.183200800
+        //EMITTED VALUE: 0 AT :08:45:07.436889800
+        //EMITTED VALUE: 1 AT :08:45:09.449696400
+        //EMITTED VALUE: 2 AT :08:45:11.443515200
+        //EMITTED VALUE: 3 AT :08:45:13.445795900
+        //EMITTED VALUE: 4 AT :08:45:15.437316900
+
+    }
+
+    @Test
     void onErrorReturn(){
         Flux.range(1,5)
                 .map(x->x==4?(x/0):x)
@@ -553,6 +578,15 @@ class ReactiveMasterApplicationTests {
                 .expectNext(List.of(1, 2), List.of(3, 4), List.of(5, 6))
                 .thenCancel()
                 .verify();
+    }
+
+    @Test
+    void bufferUntil(){
+        Flux.just("ab","cd","xy","ab","dd","mm","ab")
+                .bufferUntil(x->x.equals("ab"))
+                .as(StepVerifier::create)
+                .expectNext(List.of("ab"),List.of("cd","xy","ab"), List.of("dd","mm","ab"))
+                .verifyComplete();
     }
 
 
@@ -784,12 +818,60 @@ class ReactiveMasterApplicationTests {
     }
 
     @Test
-    void flatMapMany(){
-        Mono.just(1)
-                .flatMapMany(i->Flux.range(i,3))
+    void collect(){
+        Flux.just("a","b","a","d","b","b","e","b")
+                .collect(Collectors.groupingBy(
+                        word -> word,
+                        Collectors.counting()
+                ))
+                .doOnNext(System.out::println)
+                .then()
                 .as(StepVerifier::create)
-                .expectNext(1,2,3)
                 .verifyComplete();
+
+        // {a=2, b=4, d=1, e=1}
+    }
+
+    @Test
+    void collect2(){
+        Flux.just("ab","bbb","a","aaad","dddb","aaaaaab","mmmme","ssssb")
+                .collect(Collectors.groupingBy(
+                        String::length,
+                        Collectors.toList()
+                ))
+                .doOnNext(System.out::println)
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete();
+
+        // {1=[a], 2=[ab], 3=[bbb], 4=[aaad, dddb], 5=[mmmme, ssssb], 7=[aaaaaab]}
+    }
+
+    @Test
+    void collectSortedList(){
+        Flux.just(2,8,5,1,3)
+                .collectSortedList()
+                .doOnNext(System.out::println)
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete();
+
+        //[1, 2, 3, 5, 8]
+    }
+
+    private Flux<String> process(String data){
+        return Flux.range(1,3)
+                .map(i->data+i);
+    }
+
+    @Test
+    void flatMapMany(){
+        Mono.just("word")
+                .flatMapMany(this::process)
+                .as(StepVerifier::create)
+                .expectNext("word1","word2","word3")
+                .verifyComplete();
+
     }
 
     @Test
@@ -1002,6 +1084,306 @@ class ReactiveMasterApplicationTests {
                 .expectNext(1,22,24)
                 .verifyComplete();
     }
+
+    @Test
+    void all(){
+        Flux.just("a","ali","ab","ayoub")
+                .all(x->x.startsWith("a"))
+                .as(StepVerifier::create)
+                .expectNext(true)
+                .verifyComplete();
+    }
+
+    @Test
+    void any(){
+        Flux.just("a","ali","ab","ayoub")
+                .any(x->x.endsWith("b"))
+                .as(StepVerifier::create)
+                .expectNext(true)
+                .verifyComplete();
+    }
+
+    @Test
+    void cache(){
+        Mono<String> cache = Mono.just("data")
+                .doOnSubscribe(x -> System.out.println("SOURCE SUBSCRIBED"))
+                .cache();
+        cache
+                .doFirst(()-> System.out.println("********************"))
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete();
+
+        cache
+                .doFirst(()-> System.out.println("********************"))
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete();
+
+        // 'SOURCE SUBSCRIBED' was printed only once
+        // because in the 2nd time he used the cached value
+        /*
+                ********************
+                SOURCE SUBSCRIBED
+                ********************
+         */
+
+    }
+
+    @Test
+    void cacheWithDuration(){
+        Mono<String> cache = Mono.just("data")
+                .doOnSubscribe(x -> System.out.println("SOURCE SUBSCRIBED"))
+                .cache(Duration.ofSeconds(2));
+
+        cache
+                .doFirst(()-> System.out.println("********************"))
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete(); //'SOURCE SUBSCRIBED' was printed here since it's first time subscription
+
+        Util.sleep(1);
+
+        cache
+                .doFirst(()-> System.out.println("********************"))
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete(); //'SOURCE SUBSCRIBED' was NOT printed here, since the duration didn't expire
+
+        Util.sleep(1);
+
+        cache
+                .doFirst(()-> System.out.println("********************"))
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete(); //'SOURCE SUBSCRIBED' was printed here, since the duration expired.
+
+        /*
+            ********************
+            SOURCE SUBSCRIBED
+            ********************
+            ********************
+            SOURCE SUBSCRIBED
+         */
+
+    }
+
+    @Test
+    void cacheWithHistory(){
+        Flux<Integer> flux = Flux.range(1, 5)
+                .doOnSubscribe(x -> System.out.println("SOURCE SUBSCRIBED"))
+                .cache(3);
+
+        flux.as(StepVerifier::create)
+                .expectNext(1,2,3,4,5)
+                .verifyComplete(); // the 1st sub will get all the values, SOURCE SUBSCRIBED was printed here
+
+        flux.as(StepVerifier::create)
+                .expectNext(3,4,5)
+                .verifyComplete(); // after the 1st, any sub will get only the last 3 cached values. SOURCE SUBSCRIBED was NOT printed
+    }
+
+    @Test
+    void cacheWithHistoryAndDuration(){
+        Flux<Integer> flux = Flux.range(1, 5)
+                .doOnSubscribe(x -> System.out.println("SOURCE SUBSCRIBED"))
+                .cache(3, Duration.ofSeconds(2));
+
+        flux
+                .doFirst(()-> System.out.println("********************"))
+                .as(StepVerifier::create)
+                .expectNext(1,2,3,4,5)
+                .verifyComplete(); // the 1st sub will get all the values, SOURCE SUBSCRIBED was printed here
+
+        Util.sleep(1);
+
+        flux
+                .doFirst(()-> System.out.println("********************"))
+                .as(StepVerifier::create)
+                .expectNext(3,4,5)
+                .verifyComplete(); // after the 1st and unless the duration expired, any sub will get only the last 3 cached values. SOURCE SUBSCRIBED was NOT printed
+
+        Util.sleep(1);
+
+        flux
+                .doFirst(()-> System.out.println("********************"))
+                .as(StepVerifier::create)
+                .expectNext(1,2,3,4,5)
+                .verifyComplete(); // the  duration expired so this sub will get all the values, SOURCE SUBSCRIBED was printed here
+
+
+        /*
+        ********************
+        SOURCE SUBSCRIBED
+        ********************
+        ********************
+        SOURCE SUBSCRIBED
+         */
+    }
+
+    @Test
+    void delaySubscription() {
+        SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss.SSS");
+
+        System.out.println("STARTED AT: " + sdf.format(new Date()));
+        Mono.just("HELLO")
+                .doOnSubscribe(x -> System.out.println("SUBSCRIBED AT: " + sdf.format(new Date())))
+                .delaySubscription(Duration.ofSeconds(2))
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete();
+
+        //STARTED AT: 07:26:02.642
+        //SUBSCRIBED AT: 07:26:04.786
+    }
+
+    @Test
+    void delaySubscriptionUntilPublisherPublish() {
+
+
+        System.out.println("WAITING TO PUBLISH... :" + LocalTime.now());
+        Mono<String> first = Mono.just("HELLO")
+                .delayElement(Duration.ofSeconds(2));
+
+        Mono.just("HI")
+                .delaySubscription(first)
+                .doOnNext(x -> System.out.println("GOT VALUE AT: " + LocalTime.now()))
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete();
+
+        //WAITING TO PUBLISH... :07:35:21.519492900
+        //GOT VALUE AT: 07:35:23.713782300
+
+    }
+
+    @Test
+    void doOn(){
+        Flux<Integer> integerFlux = Flux.range(1, 20)
+                .take(10)
+                .filter(x -> x % 2 == 0)
+                .doOnSubscribe(x -> System.out.println("SUBSCRIBING TO PUBLISHER"))
+                .doFirst(() -> System.out.println("THE FIRST THING TO DO"))
+                .doFinally(x -> System.out.println("FINALLY..."))
+                .doOnNext(v -> System.out.println("EMITTING VALUE: " + v))
+                .doOnDiscard(Integer.class, d -> System.out.println("DISCARDING VALUE: " + d))
+                .doOnComplete(() -> System.out.println("COMPLETED"))
+                .doOnCancel(() -> System.out.println("CANCELLED"))
+                .doAfterTerminate(() -> System.out.println("ERROR OCCURRED OR COMPLETED"))
+                .doOnRequest(n -> System.out.println("REQUESTING " + n + " ITEMS"));
+
+
+        integerFlux
+                .as(flux-> StepVerifier.create(flux,2))
+                .expectNext(2,4)
+                .thenRequest(2)
+                .expectNext(6,8)
+                .thenCancel()
+                .verify();
+
+        //THE FIRST THING TO DO
+        //SUBSCRIBING TO PUBLISHER
+        //REQUESTING 2 ITEMS
+        //DISCARDING VALUE: 1
+        //EMITTING VALUE: 2
+        //DISCARDING VALUE: 3
+        //EMITTING VALUE: 4
+        //REQUESTING 2 ITEMS
+        //DISCARDING VALUE: 5
+        //EMITTING VALUE: 6
+        //DISCARDING VALUE: 7
+        //EMITTING VALUE: 8
+        //CANCELLED
+        //FINALLY...
+
+        integerFlux
+                .as(flux-> StepVerifier.create(flux,2))
+                .expectNext(2,4)
+                .thenRequest(2)
+                .expectNext(6,8)
+                .thenRequest(1)
+                .expectNext(10)
+                .verifyComplete();
+
+        //THE FIRST THING TO DO
+        //SUBSCRIBING TO PUBLISHER
+        //REQUESTING 2 ITEMS
+        //DISCARDING VALUE: 1
+        //EMITTING VALUE: 2
+        //DISCARDING VALUE: 3
+        //EMITTING VALUE: 4
+        //REQUESTING 2 ITEMS
+        //DISCARDING VALUE: 5
+        //EMITTING VALUE: 6
+        //DISCARDING VALUE: 7
+        //EMITTING VALUE: 8
+        //REQUESTING 1 ITEMS
+        //DISCARDING VALUE: 9
+        //EMITTING VALUE: 10
+        //COMPLETED
+        //ERROR OCCURRED OR COMPLETED
+        //FINALLY...
+
+    }
+
+    @Test
+    void elementAt(){
+        Flux.range(1, 20)
+                .elementAt(0)
+                .as(StepVerifier::create)
+                .expectNext(1)
+                .verifyComplete();
+    }
+
+    @Test
+    void hasElement(){
+        Flux.range(1, 20)
+                .hasElement(33)
+                .as(StepVerifier::create)
+                .expectNext(false)
+                .verifyComplete();
+    }
+
+    @Test
+    void hasElements(){
+        Flux.empty()
+                .hasElements()
+                .as(StepVerifier::create)
+                .expectNext(false)
+                .verifyComplete();
+    }
+
+    @Test
+    void index(){
+        Flux.range(1, 5)
+                .index()
+                .doOnNext(System.out::println)
+                .then()
+                .as(StepVerifier::create)
+                .verifyComplete();
+
+        //[0,1]
+        //[1,2]
+        //[2,3]
+        //[3,4]
+        //[4,5]
+    }
+
+    @Test
+    void last(){
+        Flux.just(1,2,3)
+                .last()
+                .as(StepVerifier::create)
+                .expectNext(3)
+                .verifyComplete();
+
+        Flux.empty()
+                .last("default-value")
+                .as(StepVerifier::create)
+                .expectNext("default-value")
+                .verifyComplete();
+    }
+
 
 
 }
